@@ -59,7 +59,7 @@ else:
 # ── Analysis ──────────────────────────────────────────────────────
 
 a = Analysis(
-    ["taskmanager/main.py"],
+    ["run_app.py"],
     pathex=[],
     binaries=[],
     datas=tesseract_datas,
@@ -67,6 +67,17 @@ a = Analysis(
         "pynput.keyboard._win32",
         "pynput.mouse._win32",
         "pynput._util.win32",
+        # Ensure all taskmanager submodules are bundled
+        "taskmanager",
+        "taskmanager.main",
+        "taskmanager.models",
+        "taskmanager.task_manager",
+        "taskmanager.task_window",
+        "taskmanager.capture",
+        "taskmanager.archive_viewer",
+        "taskmanager.animations",
+        "taskmanager.constants",
+        "taskmanager.settings",
     ],
     hookspath=[],
     hooksconfig={},
