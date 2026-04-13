@@ -1,7 +1,6 @@
 """Individual task window — frameless, thin-bordered, draggable, snap-aware."""
 
-import json
-from PySide6.QtCore import Qt, Signal, QPoint, QSize
+from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -172,6 +171,7 @@ class TaskWindow(QWidget):
         # Double-click on title area → edit title
         if event.position().y() < constants.TITLE_BAR_HEIGHT:
             self._start_title_edit()
+        super().mouseDoubleClickEvent(event)
 
     def _start_title_edit(self):
         self._title_label.hide()

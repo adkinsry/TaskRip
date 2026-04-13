@@ -3,7 +3,7 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, Signal, QRect, QPoint, QObject
+from PySide6.QtCore import Qt, Signal, Slot, QRect, QPoint, QObject
 from PySide6.QtGui import QPainter, QPen, QColor
 from PySide6.QtWidgets import QWidget, QApplication
 
@@ -53,14 +53,20 @@ class SelectionOverlay(QWidget):
         self._current = QPoint()
         self._selecting = False
 
+    @Slot()
     def start(self):
         """Show the overlay covering all screens."""
-        # Cover the virtual desktop (all monitors)
+        # Cover the virtual desktop (all monitors). Use show(), NOT
+        # showFullScreen() — fullscreen clamps to one monitor and breaks
+        # multi-display region selection.
         virtual_geom = QRect()
         for screen in QApplication.screens():
             virtual_geom = virtual_geom.united(screen.geometry())
+        self._selecting = False
+        self._origin = QPoint()
+        self._current = QPoint()
         self.setGeometry(virtual_geom)
-        self.showFullScreen()
+        self.show()
         self.activateWindow()
         self.raise_()
 
@@ -118,11 +124,15 @@ class CaptureManager(QObject):
     """Manages global hotkey and screen-to-text capture pipeline."""
 
     task_captured = Signal(str, list)  # (title, subtasks)
+    # Emitted from the pynput listener thread; connected with a queued
+    # connection so SelectionOverlay.start() runs on the Qt main thread.
+    _hotkey_pressed = Signal()
 
     def __init__(self, hotkey=None, parent=None):
         super().__init__(parent)
         self._overlay = SelectionOverlay()
         self._overlay.region_selected.connect(self._on_region_selected)
+        self._hotkey_pressed.connect(self._overlay.start, Qt.QueuedConnection)
         self._hotkey_listener = None
         self._hotkey = hotkey or constants.DEFAULT_HOTKEY
 
@@ -155,14 +165,14 @@ class CaptureManager(QObject):
             self._hotkey_listener = None
 
     def trigger_capture(self):
-        """Programmatic trigger (from menu, etc.)."""
-        self._on_hotkey()
+        """Programmatic trigger (from menu, etc.) — runs on main thread."""
+        self._overlay.start()
 
     def _on_hotkey(self):
-        """Called when the global hotkey is pressed."""
-        # Must run overlay on the main thread
-        from PySide6.QtCore import QMetaObject, Qt as QtConst
-        QMetaObject.invokeMethod(self._overlay, "start", QtConst.QueuedConnection)
+        """Called when the global hotkey is pressed (from pynput thread)."""
+        # Emitting a signal is thread-safe; the connection is queued so
+        # start() runs on the main (GUI) thread.
+        self._hotkey_pressed.emit()
 
     def _on_region_selected(self, rect: QRect):
         """Capture the screen region and run OCR."""
