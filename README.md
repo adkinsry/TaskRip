@@ -77,7 +77,7 @@ Settings are stored at `~/.local/share/taskmanager/settings.json`. The database 
 
 ## Building a standalone Windows .exe
 
-You can package the entire app — Python runtime, all dependencies, and Tesseract OCR — into a single folder with a `TaskManager.exe`. End users just unzip and double-click. No installs needed.
+You can package the entire app — Python runtime, all dependencies, and Tesseract OCR — into a single folder with a `TaskRip.exe`. End users just unzip and double-click. No installs needed.
 
 ### Prerequisites (on the Windows build machine)
 
@@ -103,15 +103,18 @@ Or manually:
 python -m PyInstaller --clean --noconfirm taskmanager.spec
 ```
 
-The output lands in `dist/TaskManager/`. The main executable is `dist/TaskManager/TaskManager.exe`.
+The output lands in `dist/TaskRip/`. The main executable is `dist/TaskRip/TaskRip.exe`.
+
+**Important:** run the `.exe` from `dist/TaskRip/` — **not** from `build/`. PyInstaller leaves intermediate artifacts under `build/taskmanager/` that look similar but are missing the bundled Python DLL and will fail with `Failed to load Python DLL ... python3XX.dll`.
 
 ### Distribute
 
-Zip the entire `dist/TaskManager/` folder and share it. The recipient unzips, runs `TaskManager.exe`, and everything works — Python, Qt, Tesseract, and all dependencies are bundled inside.
+Zip the entire `dist/TaskRip/` folder and share it. The recipient unzips, runs `TaskRip.exe`, and everything works — Python, Qt, Tesseract, and all dependencies are bundled inside.
 
 ### Notes
 
 - The build must run **on Windows** (PyInstaller creates executables for the OS it runs on)
+- Use Python **3.12 or 3.13** to build. Python 3.14 is too new — PySide6 and PyInstaller don't ship matching wheels yet, and the resulting bundle will fail to load the Python DLL at startup
 - If Tesseract is not found during the build, the .exe still works but OCR requires a separate Tesseract install on the target machine. Set `TESSERACT_PATH=C:\...\Tesseract-OCR` if auto-detection fails
 - To add a custom icon, place an `.ico` file in the repo and set `icon="path/to/icon.ico"` in `taskmanager.spec`
 - The default hotkey Super+T conflicts with Win+T on Windows — users should change it in Settings on first launch
