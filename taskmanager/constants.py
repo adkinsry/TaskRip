@@ -83,8 +83,15 @@ ARCHIVE_WINDOW_HEIGHT = 500
 
 
 def apply_theme(name):
-    """Apply a named theme by updating module-level color globals."""
-    import taskmanager.constants as c
+    """Apply a named theme by updating module-level color globals.
+
+    Uses sys.modules[__name__] rather than re-importing by string path so
+    it works regardless of how the package was loaded (normal import,
+    PyInstaller bundle, or when taskmanager lives under a different
+    top-level name).
+    """
+    import sys
+    c = sys.modules[__name__]
     theme = THEMES.get(name, THEMES["light"])
     c.BORDER_COLOR = theme["border"]
     c.BORDER_COLOR_FOCUSED = theme["border_focused"]

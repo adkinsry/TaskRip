@@ -28,10 +28,10 @@ def load_settings():
     path = _settings_path()
     if path.exists():
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 saved = json.load(f)
             defaults.update(saved)
-        except (json.JSONDecodeError, IOError):
+        except (json.JSONDecodeError, OSError):
             pass
     return defaults
 
@@ -39,7 +39,7 @@ def load_settings():
 def save_settings(settings: dict):
     """Persist settings dict to disk."""
     path = _settings_path()
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
 
 
