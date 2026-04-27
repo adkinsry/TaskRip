@@ -3,7 +3,7 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, Signal, Slot, QRect, QPoint, QObject
+from PySide6.QtCore import Qt, Signal, Slot, QRect, QPoint, QObject, QEvent
 from PySide6.QtGui import QPainter, QPen, QColor
 from PySide6.QtWidgets import QWidget, QApplication
 
@@ -47,11 +47,13 @@ class SelectionOverlay(QWidget):
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_AcceptTouchEvents)
         self.setCursor(Qt.CrossCursor)
 
         self._origin = QPoint()
         self._current = QPoint()
         self._selecting = False
+        self._touch_id = None
 
     @Slot()
     def start(self):
@@ -118,6 +120,63 @@ class SelectionOverlay(QWidget):
             self._selecting = False
             self.hide()
             self.cancelled.emit()
+
+    # ── Touch input (region selection via finger) ─────────────────
+
+    def event(self, event):
+        t = event.type()
+        if t in (QEvent.TouchBegin, QEvent.TouchUpdate,
+                 QEvent.TouchEnd, QEvent.TouchCancel):
+            return self._touch_event(event)
+        return super().event(event)
+
+    def _touch_event(self, event):
+        points = event.points()
+        if not points:
+            return False
+        point = points[0]
+        t = event.type()
+
+        if t == QEvent.TouchBegin:
+            self._touch_id = point.id()
+            self._origin = point.position().toPoint()
+            self._current = self._origin
+            self._selecting = True
+            event.accept()
+            return True
+
+        if t == QEvent.TouchUpdate:
+            if point.id() == self._touch_id and self._selecting:
+                self._current = point.position().toPoint()
+                self.update()
+                event.accept()
+                return True
+
+        if t == QEvent.TouchEnd:
+            if point.id() == self._touch_id and self._selecting:
+                self._selecting = False
+                self._touch_id = None
+                rect = QRect(self._origin, self._current).normalized()
+                self.hide()
+                if rect.width() > 10 and rect.height() > 10:
+                    global_rect = QRect(
+                        self.mapToGlobal(rect.topLeft()),
+                        rect.size(),
+                    )
+                    self.region_selected.emit(global_rect)
+                else:
+                    self.cancelled.emit()
+                event.accept()
+                return True
+
+        if t == QEvent.TouchCancel:
+            self._selecting = False
+            self._touch_id = None
+            self.hide()
+            self.cancelled.emit()
+            return True
+
+        return False
 
 
 class CaptureManager(QObject):

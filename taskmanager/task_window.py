@@ -1,6 +1,13 @@
-"""Individual task window — frameless, thin-bordered, draggable, snap-aware."""
+"""Individual task window — frameless, thin-bordered, draggable, snap-aware.
 
-from PySide6.QtCore import Qt, Signal, QPoint
+Supports both mouse and touch input:
+- Mouse: drag title bar to move, double-click title to edit, scroll-wheel
+  to resize (while holding left button on title bar).
+- Touch: single-finger drag on title bar to move, long-press title bar to
+  edit title, two-finger pinch anywhere on the window to resize.
+"""
+
+from PySide6.QtCore import Qt, Signal, QPoint, QEvent, QTimer
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -8,6 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from . import constants
+
+LONG_PRESS_MS = 600
+LONG_PRESS_MOVE_THRESHOLD = 10
 
 
 class TaskWindow(QWidget):
@@ -32,9 +42,24 @@ class TaskWindow(QWidget):
         self._resize_mode = False  # True while left-button held on title bar
         self._focused = False
 
+        # Touch state
+        self._touch_id = None
+        self._touch_dragging = False
+        self._touch_start_global = QPoint()
+        self._pinch_start_w = self._width_units
+        self._pinch_start_h = self._height_units
+
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WA_AcceptTouchEvents)
         self.setMouseTracking(True)
+        self.grabGesture(Qt.PinchGesture)
+
+        # Long-press timer (touch alternative to double-click for title edit)
+        self._long_press_timer = QTimer(self)
+        self._long_press_timer.setSingleShot(True)
+        self._long_press_timer.setInterval(LONG_PRESS_MS)
+        self._long_press_timer.timeout.connect(self._on_long_press)
 
         self._apply_grid_size()
         self._build_ui()
@@ -101,9 +126,9 @@ class TaskWindow(QWidget):
         self._title_edit.returnPressed.connect(self._finish_title_edit)
         tb_layout.addWidget(self._title_edit)
 
-        # Done button
+        # Done button (24x24 for reasonable touch target within the 28px title bar)
         self._done_btn = QPushButton("✓")
-        self._done_btn.setFixedSize(22, 22)
+        self._done_btn.setFixedSize(24, 24)
         self._done_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._done_btn.setToolTip("Mark complete and archive")
         self._done_btn.setStyleSheet(f"""
@@ -187,7 +212,7 @@ class TaskWindow(QWidget):
         self._title_label.show()
         self.task_changed.emit(self.task_id)
 
-    # ── Drag ──────────────────────────────────────────────────────
+    # ── Mouse drag ───────────────────────────────────────────────
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and event.position().y() < constants.TITLE_BAR_HEIGHT:
@@ -223,6 +248,96 @@ class TaskWindow(QWidget):
             event.accept()
         else:
             super().wheelEvent(event)
+
+    # ── Touch + gesture handling ──────────────────────────────────
+
+    def event(self, event):
+        t = event.type()
+        if t == QEvent.Gesture:
+            return self._gesture_event(event)
+        if t in (QEvent.TouchBegin, QEvent.TouchUpdate,
+                 QEvent.TouchEnd, QEvent.TouchCancel):
+            return self._touch_event(event)
+        return super().event(event)
+
+    def _touch_event(self, event):
+        points = event.points()
+        if not points:
+            return False
+
+        # Multi-touch → let the gesture recogniser handle it
+        if len(points) > 1:
+            return False
+
+        point = points[0]
+        t = event.type()
+
+        if t == QEvent.TouchBegin:
+            local_y = point.position().y()
+            if local_y < constants.TITLE_BAR_HEIGHT:
+                self._touch_id = point.id()
+                self._touch_dragging = True
+                self._touch_start_global = point.globalPosition().toPoint()
+                self._drag_offset = self._touch_start_global - self.pos()
+                self.raise_()
+                self.drag_started.emit(self)
+                self._long_press_timer.start()
+                event.accept()
+                return True
+            # Touch outside title bar → let Qt synthesise mouse events
+            # so child widgets (checkboxes, done button) work normally.
+            return False
+
+        if t == QEvent.TouchUpdate:
+            if self._touch_dragging and point.id() == self._touch_id:
+                global_pos = point.globalPosition().toPoint()
+                moved = (global_pos - self._touch_start_global).manhattanLength()
+                if moved > LONG_PRESS_MOVE_THRESHOLD:
+                    self._long_press_timer.stop()
+                self.move(global_pos - self._drag_offset)
+                event.accept()
+                return True
+
+        if t == QEvent.TouchEnd:
+            if self._touch_dragging and point.id() == self._touch_id:
+                self._touch_dragging = False
+                self._touch_id = None
+                self._long_press_timer.stop()
+                self.drag_finished.emit(self)
+                event.accept()
+                return True
+
+        if t == QEvent.TouchCancel:
+            self._touch_dragging = False
+            self._touch_id = None
+            self._long_press_timer.stop()
+            return True
+
+        return False
+
+    def _gesture_event(self, event):
+        pinch = event.gesture(Qt.PinchGesture)
+        if pinch:
+            if pinch.state() == Qt.GestureStarted:
+                self._pinch_start_w = self._width_units
+                self._pinch_start_h = self._height_units
+            elif pinch.state() == Qt.GestureUpdated:
+                factor = pinch.totalScaleFactor()
+                target_w = round(self._pinch_start_w * factor)
+                target_h = round(self._pinch_start_h * factor)
+                dw = target_w - self._width_units
+                dh = target_h - self._height_units
+                if dw != 0 or dh != 0:
+                    self.resize_by_units(dw, dh)
+            event.accept()
+            return True
+        return super().event(event)
+
+    def _on_long_press(self):
+        """Long-press on title bar → edit title (touch alternative to double-click)."""
+        self._touch_dragging = False
+        self._touch_id = None
+        self._start_title_edit()
 
     # ── Focus styling ─────────────────────────────────────────────
 
