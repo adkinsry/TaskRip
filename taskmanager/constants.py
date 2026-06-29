@@ -70,8 +70,10 @@ ARCHIVE_ANIM_DURATION = 350
 SLIDE_ANIM_DURATION = 250
 APPEAR_ANIM_DURATION = 200
 
-# Default hotkey for screen capture (Super+T)
-DEFAULT_HOTKEY = "<cmd>+t"
+# Default hotkey for screen capture. Ctrl+Alt+T avoids the Super/Win+T
+# conflict (Win+T is reserved by Windows to focus the taskbar) and is not
+# an OS-reserved combination on Linux or macOS either.
+DEFAULT_HOTKEY = "<ctrl>+<alt>+t"
 
 # Database
 DB_FILENAME = "taskmanager.db"

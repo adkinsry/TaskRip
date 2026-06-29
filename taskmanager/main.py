@@ -37,8 +37,16 @@ def _resolve_theme(name):
 
 
 def main():
+    # High-DPI: Qt6 enables scaling by default, but the rounding policy must
+    # be set BEFORE the QApplication is constructed. PassThrough keeps
+    # fractional ratios (125%/150%) exact, which the screen-capture path
+    # relies on to map logical coordinates to physical pixels.
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
+
     app = QApplication(sys.argv)
-    app.setApplicationName("TaskManager")
+    app.setApplicationName("TaskRip")
     app.setQuitOnLastWindowClosed(False)  # keep running in tray
 
     # Load and apply settings
@@ -55,7 +63,19 @@ def main():
 
     # ── System tray ───────────────────────────────────────────────
     tray = QSystemTrayIcon(_make_tray_icon(), app)
-    tray.setToolTip(f"Task Manager — {hotkey} to capture")
+    tray.setToolTip(f"TaskRip — {hotkey} to capture")
+
+    # Surface hotkey-registration failures to the user (the bundled .exe has
+    # no console, so a silent print would make the app look dead).
+    capture_mgr.hotkey_failed.connect(
+        lambda msg: tray.showMessage(
+            "TaskRip — hotkey unavailable",
+            f"{msg}\nUse the tray menu's “Capture Task” instead, or pick a "
+            f"different shortcut in Settings.",
+            QSystemTrayIcon.Warning,
+            6000,
+        )
+    )
 
     menu = QMenu()
 
@@ -91,7 +111,7 @@ def main():
                 hotkey = new_hotkey
                 capture_mgr.update_hotkey(hotkey)
                 capture_action.setText(f"Capture Task ({hotkey})")
-                tray.setToolTip(f"Task Manager — {hotkey} to capture")
+                tray.setToolTip(f"TaskRip — {hotkey} to capture")
 
         dlg.settings_changed.connect(on_changed)
         dlg.exec()
@@ -120,7 +140,7 @@ def main():
     save_timer.start(30_000)
 
     tray.showMessage(
-        "Task Manager",
+        "TaskRip",
         f"Running in system tray. Press {hotkey} to capture a task from screen.",
         QSystemTrayIcon.Information,
         3000,
