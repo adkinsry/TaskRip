@@ -6,7 +6,8 @@ Built with PySide6 (Qt for Python) — runs on Linux and ports to Windows with z
 
 ## Features
 
-- **Screen capture to task** — Press Super+T (configurable), select a region on any monitor, and OCR extracts the text into a new task window
+- **Screen capture to task** — Press the capture hotkey (Ctrl+Alt+T, configurable), select a region on any monitor, and OCR extracts the text into a new task window
+- **Rip a Button** *(Windows)* — Pick any on-screen control from another app and drop a floating, draggable proxy of it anywhere you like. Click the proxy to re-fire the original control. Build your own floating control surface from functions across many apps. Uses Windows UI Automation to invoke the real control, with a window-anchored click as fallback
 - **Minimal task windows** — Thin 1px-bordered, frameless cards. No sticky-note aesthetics, just clean flat UI
 - **Modular snapping** — Drag windows near each other and they snap together along edges (20px threshold). All sizes are multiples of a 40px grid unit, so windows always tile cleanly
 - **Scroll-wheel resize** — Hold left click on the title bar and scroll to resize in fixed grid increments

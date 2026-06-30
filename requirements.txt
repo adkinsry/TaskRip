@@ -3,3 +3,6 @@ pytesseract>=0.3.10
 Pillow>=10.0
 pynput>=1.7
 mss>=9.0
+# "Rip a Button" feature — UI Automation invoke path (Windows only). Pulls in
+# comtypes. On non-Windows the feature degrades to coordinate-click fallback.
+uiautomation>=2.0 ; sys_platform == "win32"

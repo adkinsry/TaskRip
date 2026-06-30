@@ -44,6 +44,17 @@ class Database:
                 created_at TEXT NOT NULL,
                 archived_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS button_proxies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL DEFAULT '',
+                screenshot BLOB,
+                source_window_title TEXT NOT NULL DEFAULT '',
+                source_window_class TEXT NOT NULL DEFAULT '',
+                target_json TEXT NOT NULL DEFAULT '{}',
+                x INTEGER NOT NULL DEFAULT 200,
+                y INTEGER NOT NULL DEFAULT 200,
+                created_at TEXT NOT NULL
+            );
         """)
         self._conn.commit()
 
@@ -144,6 +155,56 @@ class Database:
         self._conn.execute("DELETE FROM archived_tasks WHERE id = ?", (archive_id,))
         self._conn.commit()
 
+    # ── Button proxies (ripped controls) ──────────────────────────
+
+    def add_proxy(self, label, target, screenshot=None,
+                  source_window_title="", source_window_class="",
+                  x=200, y=200):
+        """Persist a ripped-control proxy. `target` is a JSON-serializable
+        dict describing how to re-invoke the original control (UIA props +
+        coordinate fallback). `screenshot` is raw PNG bytes or None."""
+        now = datetime.now().isoformat()
+        cur = self._conn.execute(
+            "INSERT INTO button_proxies"
+            " (label, screenshot, source_window_title, source_window_class,"
+            "  target_json, x, y, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (label, screenshot, source_window_title, source_window_class,
+             json.dumps(target), x, y, now),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def update_proxy(self, proxy_id, **fields):
+        allowed = {"label", "screenshot", "source_window_title",
+                   "source_window_class", "target", "x", "y"}
+        parts, vals = [], []
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            if k == "target":
+                k = "target_json"
+                v = json.dumps(v)
+            parts.append(f"{k} = ?")
+            vals.append(v)
+        if not parts:
+            return
+        vals.append(proxy_id)
+        self._conn.execute(
+            f"UPDATE button_proxies SET {', '.join(parts)} WHERE id = ?", vals
+        )
+        self._conn.commit()
+
+    def get_all_proxies(self):
+        rows = self._conn.execute(
+            "SELECT * FROM button_proxies ORDER BY created_at ASC"
+        ).fetchall()
+        return [self._proxy_row_to_dict(r) for r in rows]
+
+    def delete_proxy(self, proxy_id):
+        self._conn.execute("DELETE FROM button_proxies WHERE id = ?", (proxy_id,))
+        self._conn.commit()
+
     # ── Helpers ───────────────────────────────────────────────────
 
     @staticmethod
@@ -151,6 +212,17 @@ class Database:
         d = dict(row)
         if "subtasks" in d and isinstance(d["subtasks"], str):
             d["subtasks"] = json.loads(d["subtasks"])
+        return d
+
+    @staticmethod
+    def _proxy_row_to_dict(row):
+        d = dict(row)
+        raw = d.pop("target_json", "{}")
+        try:
+            d["target"] = json.loads(raw) if isinstance(raw, str) else {}
+        except (json.JSONDecodeError, TypeError):
+            d["target"] = {}
+        # sqlite returns BLOB as bytes (or None); keep as-is for QPixmap.loadFromData
         return d
 
     def close(self):

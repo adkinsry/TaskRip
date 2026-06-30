@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QInputDialog
 from .models import Database
 from .task_manager import TaskManager
 from .capture import CaptureManager
+from .proxy_manager import ProxyManager
 from .archive_viewer import ArchiveViewer
 from .settings import SettingsDialog, load_settings, detect_system_theme
 from . import constants
@@ -57,6 +58,7 @@ def main():
     db = Database()
     task_mgr = TaskManager(db)
     capture_mgr = CaptureManager(hotkey=hotkey)
+    proxy_mgr = ProxyManager(db)
 
     # Wire capture → task creation
     capture_mgr.task_captured.connect(task_mgr.create_task)
@@ -79,9 +81,18 @@ def main():
 
     menu = QMenu()
 
+    # Surface proxy/rip notifications to the tray too.
+    proxy_mgr.notify.connect(
+        lambda title, body: tray.showMessage(title, body, QSystemTrayIcon.Information, 5000)
+    )
+
     capture_action = QAction(f"Capture Task ({hotkey})", menu)
     capture_action.triggered.connect(capture_mgr.trigger_capture)
     menu.addAction(capture_action)
+
+    rip_action = QAction("Rip a Button…", menu)
+    rip_action.triggered.connect(proxy_mgr.trigger_rip)
+    menu.addAction(rip_action)
 
     new_action = QAction("New Task…", menu)
     new_action.triggered.connect(lambda: _manual_new_task(task_mgr))
@@ -122,14 +133,15 @@ def main():
     menu.addSeparator()
 
     quit_action = QAction("Quit", menu)
-    quit_action.triggered.connect(lambda: _quit(app, task_mgr, capture_mgr, db))
+    quit_action.triggered.connect(lambda: _quit(app, task_mgr, capture_mgr, proxy_mgr, db))
     menu.addAction(quit_action)
 
     tray.setContextMenu(menu)
     tray.show()
 
-    # Restore saved tasks
+    # Restore saved tasks and proxies
     task_mgr.load_tasks()
+    proxy_mgr.load_proxies()
 
     # Start hotkey listener
     capture_mgr.start()
@@ -137,6 +149,7 @@ def main():
     # Auto-save periodically (every 30 seconds)
     save_timer = QTimer(app)
     save_timer.timeout.connect(task_mgr.save_all)
+    save_timer.timeout.connect(proxy_mgr.save_all)
     save_timer.start(30_000)
 
     tray.showMessage(
@@ -171,8 +184,9 @@ def _open_archives(db, task_mgr):
     viewer.exec()
 
 
-def _quit(app, task_mgr, capture_mgr, db):
+def _quit(app, task_mgr, capture_mgr, proxy_mgr, db):
     task_mgr.close_all()
+    proxy_mgr.close_all()
     capture_mgr.stop()
     db.close()
     app.quit()

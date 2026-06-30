@@ -1,0 +1,29 @@
+name: CI
+
+# Fast Linux checks on every push: byte-compile all modules and run the
+# non-GUI unit tests (persistence layer). The full Windows .exe build lives
+# in build-windows.yml.
+
+on:
+  push:
+    branches:
+      - claude/setup-task-manager-app-NcPiH
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Byte-compile all modules
+        run: python -m compileall taskmanager run_app.py build_exe.py
+
+      - name: Run non-GUI unit tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v

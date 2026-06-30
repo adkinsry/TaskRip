@@ -67,6 +67,14 @@ a = Analysis(
         "pynput.keyboard._win32",
         "pynput.mouse._win32",
         "pynput._util.win32",
+        # UI Automation invoke path for the "Rip a Button" feature.
+        # uiautomation ships precompiled UIA definitions (no runtime COM
+        # codegen), which keeps it PyInstaller-friendly; comtypes is its
+        # backend.
+        "uiautomation",
+        "comtypes",
+        "comtypes.client",
+        "comtypes.gen",
         # Ensure all taskmanager submodules are bundled
         "taskmanager",
         "taskmanager.main",
@@ -78,6 +86,9 @@ a = Analysis(
         "taskmanager.animations",
         "taskmanager.constants",
         "taskmanager.settings",
+        "taskmanager.rip",
+        "taskmanager.proxy_window",
+        "taskmanager.proxy_manager",
     ],
     hookspath=[],
     hooksconfig={},
