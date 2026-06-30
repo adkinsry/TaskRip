@@ -43,6 +43,16 @@ class ProxyManager(QObject):
             tile.close()
         self._tiles.clear()
 
+    def reload_for_theme(self):
+        """Persist positions, then rebuild tiles so they pick up new theme
+        colors (stylesheets are applied at construction time)."""
+        self.save_all()
+        for tile in self._tiles:
+            tile.close()
+            tile.deleteLater()
+        self._tiles.clear()
+        self.load_proxies()
+
     # ── Rip flow ──────────────────────────────────────────────────
 
     @Slot()

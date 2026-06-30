@@ -113,9 +113,12 @@ def main():
 
         def on_changed(new_settings):
             nonlocal hotkey
-            # Apply theme
+            # Apply theme and restyle everything already on screen.
             theme = _resolve_theme(new_settings.get("theme", "light"))
             constants.apply_theme(theme)
+            task_mgr.reload_for_theme()
+            proxy_mgr.reload_for_theme()
+            tray.setIcon(_make_tray_icon())
             # Update hotkey
             new_hotkey = new_settings.get("hotkey", constants.DEFAULT_HOTKEY)
             if new_hotkey != hotkey:

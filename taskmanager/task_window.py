@@ -18,12 +18,16 @@ from . import constants
 
 LONG_PRESS_MS = 600
 LONG_PRESS_MOVE_THRESHOLD = 10
+# Pointer must move this far before a title-bar press becomes a drag. Below
+# it, a press+release is a focus click (no snap, no DB write).
+DRAG_MOVE_THRESHOLD = 5
 
 
 class TaskWindow(QWidget):
     """A minimal, frameless task card that can be dragged, resized, and snapped."""
 
-    task_completed = Signal(int)   # task_id
+    task_completed = Signal(int)   # task_id — archive
+    task_deleted = Signal(int)     # task_id — discard without archiving
     task_changed = Signal(int)     # task_id (content or geometry changed)
     drag_started = Signal(object)  # self
     drag_finished = Signal(object) # self
@@ -38,6 +42,8 @@ class TaskWindow(QWidget):
         self._height_units = height_units or constants.DEFAULT_HEIGHT_UNITS
 
         self._dragging = False
+        self._maybe_drag = False        # title-bar pressed, not yet moved enough
+        self._press_global = QPoint()
         self._drag_offset = QPoint()
         self._resize_mode = False  # True while left-button held on title bar
         self._focused = False
@@ -52,7 +58,6 @@ class TaskWindow(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setAttribute(Qt.WA_AcceptTouchEvents)
-        self.setMouseTracking(True)
         self.grabGesture(Qt.PinchGesture)
 
         # Long-press timer (touch alternative to double-click for title edit)
@@ -126,6 +131,24 @@ class TaskWindow(QWidget):
         self._title_edit.returnPressed.connect(self._finish_title_edit)
         tb_layout.addWidget(self._title_edit)
 
+        # Delete button (discard without archiving)
+        self._delete_btn = QPushButton("✕")
+        self._delete_btn.setFixedSize(20, 20)
+        self._delete_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._delete_btn.setToolTip("Delete this task (does not archive)")
+        self._delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {constants.SUBTITLE_COLOR};
+                border: 1px solid {constants.BORDER_COLOR}; border-radius: 3px;
+                font-size: 11px; font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background: #e53935; color: #fff; border-color: #c62828;
+            }}
+        """)
+        self._delete_btn.clicked.connect(lambda: self.task_deleted.emit(self.task_id))
+        tb_layout.addWidget(self._delete_btn)
+
         # Done button (24x24 for reasonable touch target within the 28px title bar)
         self._done_btn = QPushButton("✓")
         self._done_btn.setFixedSize(24, 24)
@@ -162,11 +185,34 @@ class TaskWindow(QWidget):
         scroll.setWidget(self._subtask_container)
         inner.addWidget(scroll)
 
+        # "+ Add subtask" — always visible below the list.
+        self._add_sub_btn = QPushButton("+ Add subtask")
+        self._add_sub_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._add_sub_btn.setFont(QFont("Sans", 8))
+        self._add_sub_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {constants.SUBTITLE_COLOR};
+                border: 1px dashed {constants.BORDER_COLOR}; border-radius: 3px;
+                padding: 2px;
+            }}
+            QPushButton:hover {{ color: {constants.ACCENT_COLOR};
+                                 border-color: {constants.ACCENT_COLOR}; }}
+        """)
+        self._add_sub_btn.clicked.connect(self._add_subtask)
+        inner.addWidget(self._add_sub_btn)
+
         root.addWidget(container)
         self._populate_subtasks()
 
+    def _normalize_sub(self, idx):
+        """Ensure subtask at idx is a dict {text, done}."""
+        sub = self._subtasks[idx]
+        if isinstance(sub, str):
+            self._subtasks[idx] = {"text": sub, "done": False}
+        return self._subtasks[idx]
+
     def _populate_subtasks(self):
-        # Clear existing (except the stretch at end)
+        # Clear existing rows (keep the trailing stretch).
         while self._subtask_layout.count() > 1:
             item = self._subtask_layout.takeAt(0)
             if item.widget():
@@ -175,19 +221,69 @@ class TaskWindow(QWidget):
         for i, sub in enumerate(self._subtasks):
             text = sub if isinstance(sub, str) else sub.get("text", "")
             checked = False if isinstance(sub, str) else sub.get("done", False)
-            cb = QCheckBox(text)
+
+            row = QWidget()
+            row_l = QHBoxLayout(row)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(3)
+
+            cb = QCheckBox()
             cb.setChecked(checked)
-            cb.setFont(QFont("Sans", 8))
-            cb.setStyleSheet(f"color: {constants.TEXT_COLOR}; background: transparent;")
+            cb.setStyleSheet("background: transparent;")
             cb.stateChanged.connect(lambda state, idx=i: self._subtask_toggled(idx, state))
-            self._subtask_layout.insertWidget(i, cb)
+            row_l.addWidget(cb)
+
+            edit = QLineEdit(text)
+            edit.setFont(QFont("Sans", 8))
+            edit.setFrame(False)
+            edit.setStyleSheet(
+                f"color: {constants.TEXT_COLOR}; background: transparent; border: none;"
+            )
+            edit.editingFinished.connect(lambda e=edit, idx=i: self._subtask_text_changed(idx, e.text()))
+            row_l.addWidget(edit, 1)
+
+            del_btn = QPushButton("✕")
+            del_btn.setFixedSize(16, 16)
+            del_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            del_btn.setToolTip("Remove subtask")
+            del_btn.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {constants.SUBTITLE_COLOR};"
+                f" border: none; font-size: 10px; }}"
+                f" QPushButton:hover {{ color: #e53935; }}"
+            )
+            del_btn.clicked.connect(lambda _=False, idx=i: self._delete_subtask(idx))
+            row_l.addWidget(del_btn)
+
+            self._subtask_layout.insertWidget(i, row)
 
     def _subtask_toggled(self, idx, state):
-        if idx < len(self._subtasks):
-            if isinstance(self._subtasks[idx], str):
-                self._subtasks[idx] = {"text": self._subtasks[idx], "done": bool(state)}
-            else:
-                self._subtasks[idx]["done"] = bool(state)
+        if 0 <= idx < len(self._subtasks):
+            self._normalize_sub(idx)["done"] = bool(state)
+            self.task_changed.emit(self.task_id)
+
+    def _subtask_text_changed(self, idx, text):
+        if 0 <= idx < len(self._subtasks):
+            new_text = text.strip()
+            if self._normalize_sub(idx).get("text", "") != new_text:
+                self._subtasks[idx]["text"] = new_text
+                self.task_changed.emit(self.task_id)
+
+    def _add_subtask(self):
+        self._subtasks.append({"text": "", "done": False})
+        self._populate_subtasks()
+        self.task_changed.emit(self.task_id)
+        # Focus the new row's editor for immediate typing.
+        new_idx = len(self._subtasks) - 1
+        item = self._subtask_layout.itemAt(new_idx)
+        if item and item.widget():
+            edits = item.widget().findChildren(QLineEdit)
+            if edits:
+                edits[0].setFocus()
+
+    def _delete_subtask(self, idx):
+        if 0 <= idx < len(self._subtasks):
+            self._subtasks.pop(idx)
+            self._populate_subtasks()
             self.task_changed.emit(self.task_id)
 
     # ── Title editing ─────────────────────────────────────────────
@@ -216,24 +312,36 @@ class TaskWindow(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and event.position().y() < constants.TITLE_BAR_HEIGHT:
-            self._dragging = True
-            self._resize_mode = True
-            self._drag_offset = event.globalPosition().toPoint() - self.pos()
+            # Arm a potential drag, but don't commit (no drag_started / snap /
+            # DB write) until the pointer actually moves past the threshold —
+            # otherwise a focus click would trigger a snap and a save.
+            self._maybe_drag = True
+            self._dragging = False
+            self._resize_mode = True  # enables scroll-wheel resize while held
+            self._press_global = event.globalPosition().toPoint()
+            self._drag_offset = self._press_global - self.pos()
             self.raise_()
-            self.drag_started.emit(self)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._dragging:
-            new_pos = event.globalPosition().toPoint() - self._drag_offset
-            self.move(new_pos)
+        if self._maybe_drag and (event.buttons() & Qt.LeftButton):
+            gp = event.globalPosition().toPoint()
+            if not self._dragging:
+                if (gp - self._press_global).manhattanLength() > DRAG_MOVE_THRESHOLD:
+                    self._dragging = True
+                    self.drag_started.emit(self)
+            if self._dragging:
+                self.move(gp - self._drag_offset)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._dragging:
+        if event.button() == Qt.LeftButton and self._maybe_drag:
+            was_drag = self._dragging
+            self._maybe_drag = False
             self._dragging = False
             self._resize_mode = False
-            self.drag_finished.emit(self)
+            if was_drag:
+                self.drag_finished.emit(self)
         super().mouseReleaseEvent(event)
 
     # ── Scroll-wheel resize (only when left button held on title bar) ─

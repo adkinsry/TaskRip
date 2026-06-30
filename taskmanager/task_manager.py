@@ -1,6 +1,6 @@
 """Orchestrates all task windows — snapping, layout, archival cascading."""
 
-from PySide6.QtCore import QObject, Signal, QPoint
+from PySide6.QtCore import QObject, Signal, QPoint, QRect
 from PySide6.QtWidgets import QApplication
 
 from . import constants
@@ -43,6 +43,16 @@ class TaskManager(QObject):
                 height_units=data["height_units"],
             )
 
+    def reload_for_theme(self):
+        """Persist, then rebuild every window so it picks up the current
+        theme colors (stylesheets are applied at construction time)."""
+        self.save_all()
+        for win in self._windows:
+            win.close()
+            win.deleteLater()
+        self._windows.clear()
+        self.load_tasks()
+
     # ── Task creation ─────────────────────────────────────────────
 
     def create_task(self, title, subtasks=None):
@@ -82,6 +92,7 @@ class TaskManager(QObject):
             height_units=task_data.get("height_units"),
         )
         win.task_completed.connect(self._on_task_completed)
+        win.task_deleted.connect(self._on_task_deleted)
         win.task_changed.connect(self._on_task_changed)
         win.drag_finished.connect(self._on_drag_finished)
         self._windows.append(win)
@@ -95,7 +106,6 @@ class TaskManager(QObject):
         if screen:
             geom = screen.availableGeometry()
         else:
-            from PySide6.QtCore import QRect
             geom = QRect(0, 0, 1920, 1080)
 
         step_x = constants.DEFAULT_WIDTH_UNITS * constants.GRID_UNIT
@@ -117,7 +127,6 @@ class TaskManager(QObject):
         return QPoint(margin + (n * 20) % 200, margin + (n * 20) % 200)
 
     def _overlaps_any(self, pos, w, h):
-        from PySide6.QtCore import QRect
         candidate = QRect(pos.x(), pos.y(), w, h)
         for win in self._windows:
             if not win.isVisible():
@@ -130,11 +139,22 @@ class TaskManager(QObject):
     # ── Snapping ──────────────────────────────────────────────────
 
     def find_snap_position(self, window):
-        """Snap window edges to nearby windows' edges."""
+        """Snap window edges to nearby windows' edges.
+
+        An X-axis snap is only considered against windows the dragged window
+        is vertically near (and vice-versa), so a distant window can't drag
+        an axis to align with it. A final guard cancels any snap that would
+        land the window substantially on top of another.
+        """
         px, py = window.x(), window.y()
         pw, ph = window.width(), window.height()
+        T = constants.SNAP_THRESHOLD
         snap_x, snap_y = px, py
-        best_dx, best_dy = constants.SNAP_THRESHOLD + 1, constants.SNAP_THRESHOLD + 1
+        best_dx, best_dy = T + 1, T + 1
+
+        def near(a0, a1, b0, b1):
+            # Ranges [a0,a1] and [b0,b1] overlap or sit within T of each other.
+            return a0 <= b1 + T and b0 <= a1 + T
 
         for other in self._windows:
             if other is window or not other.isVisible():
@@ -142,35 +162,51 @@ class TaskManager(QObject):
             ox, oy = other.x(), other.y()
             ow, oh = other.width(), other.height()
 
-            # Horizontal edge pairs: left↔right, right↔left, left↔left, right↔right
-            pairs_x = [
-                (px, ox + ow),          # my left → their right
-                (px + pw, ox),          # my right → their left
-                (px, ox),              # my left → their left
-                (px + pw, ox + ow),    # my right → their right
-            ]
-            for my_edge, their_edge in pairs_x:
-                d = abs(my_edge - their_edge)
-                if d < best_dx:
-                    best_dx = d
-                    snap_x = px + (their_edge - my_edge)
+            # X snaps only when the two windows are vertically near.
+            if near(py, py + ph, oy, oy + oh):
+                for my_edge, their_edge in (
+                    (px, ox + ow),        # my left  → their right  (adjacency)
+                    (px + pw, ox),        # my right → their left   (adjacency)
+                    (px, ox),             # my left  → their left   (alignment)
+                    (px + pw, ox + ow),   # my right → their right  (alignment)
+                ):
+                    d = abs(my_edge - their_edge)
+                    if d < best_dx:
+                        best_dx = d
+                        snap_x = px + (their_edge - my_edge)
 
-            # Vertical edge pairs: top↔bottom, bottom↔top, top↔top, bottom↔bottom
-            pairs_y = [
-                (py, oy + oh),
-                (py + ph, oy),
-                (py, oy),
-                (py + ph, oy + oh),
-            ]
-            for my_edge, their_edge in pairs_y:
-                d = abs(my_edge - their_edge)
-                if d < best_dy:
-                    best_dy = d
-                    snap_y = py + (their_edge - my_edge)
+            # Y snaps only when the two windows are horizontally near.
+            if near(px, px + pw, ox, ox + ow):
+                for my_edge, their_edge in (
+                    (py, oy + oh),
+                    (py + ph, oy),
+                    (py, oy),
+                    (py + ph, oy + oh),
+                ):
+                    d = abs(my_edge - their_edge)
+                    if d < best_dy:
+                        best_dy = d
+                        snap_y = py + (their_edge - my_edge)
 
-        result_x = snap_x if best_dx <= constants.SNAP_THRESHOLD else px
-        result_y = snap_y if best_dy <= constants.SNAP_THRESHOLD else py
-        return QPoint(result_x, result_y)
+        rx = snap_x if best_dx <= T else px
+        ry = snap_y if best_dy <= T else py
+
+        # Never snap a window onto another. Edge-adjacency snaps barely touch
+        # (overlap ≈ 0); only an alignment-on-both-axes collision overlaps
+        # heavily — in that case keep where the user dropped it.
+        cand = QRect(rx, ry, pw, ph)
+        for other in self._windows:
+            if other is window or not other.isVisible():
+                continue
+            inter = cand.intersected(
+                QRect(other.x(), other.y(), other.width(), other.height())
+            )
+            if inter.width() > 2 and inter.height() > 2:
+                area = inter.width() * inter.height()
+                smaller = min(pw * ph, other.width() * other.height())
+                if smaller > 0 and area > 0.30 * smaller:
+                    return QPoint(px, py)
+        return QPoint(rx, ry)
 
     # ── Event handlers ────────────────────────────────────────────
 
@@ -193,6 +229,31 @@ class TaskManager(QObject):
                 )
                 break
 
+    def _on_task_deleted(self, task_id):
+        """Permanently discard an active task (no archival) after confirming."""
+        target = None
+        for win in self._windows:
+            if win.task_id == task_id:
+                target = win
+                break
+        if target is None:
+            return
+        from PySide6.QtWidgets import QMessageBox
+        resp = QMessageBox.question(
+            target, "Delete task",
+            "Delete this task? It will NOT be saved to the archive.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+        removed_rect = QRect(target.x(), target.y(),
+                             target.width(), target.height())
+        self._windows.remove(target)
+        target.close()
+        target.deleteLater()
+        self.db.delete_task(task_id)
+        self._cascade_fill(removed_rect)
+
     def _on_task_completed(self, task_id):
         """Archive the task with a fly-away animation, then cascade remaining."""
         target_win = None
@@ -205,8 +266,10 @@ class TaskManager(QObject):
         if not target_win:
             return
 
-        # Capture original position BEFORE the animation moves the window
-        original_pos = target_win.pos()
+        # Capture the archived window's rectangle BEFORE the animation
+        # shrinks/moves it — the cascade needs its real geometry.
+        removed_rect = QRect(target_win.x(), target_win.y(),
+                             target_win.width(), target_win.height())
 
         # Determine archive animation target (top-right of screen)
         screen = QApplication.primaryScreen()
@@ -223,24 +286,45 @@ class TaskManager(QObject):
             self.db.archive_task(task_id)
             target_win.hide()
             target_win.deleteLater()
-            self._cascade_fill(target_idx, original_pos)
+            # Compute the cascade from CURRENT state, not a stale index.
+            self._cascade_fill(removed_rect)
             self.archive_requested.emit()
 
         anim = animate_archive(target_win, archive_target, after_archive)
         self._active_anims.append(anim)
         anim.finished.connect(lambda a=anim: self._active_anims.remove(a) if a in self._active_anims else None)
 
-    def _cascade_fill(self, removed_idx, removed_pos):
-        """Slide subsequent windows up/left to fill the gap left by an archived task."""
-        if removed_idx >= len(self._windows):
+    def _cascade_fill(self, removed_rect):
+        """Close the vertical gap left by an archived window: windows in the
+        same column (horizontally overlapping it) that sit at or below the gap
+        slide up by the gap height. Windows in other columns are untouched, so
+        a deliberately-arranged layout is preserved.
+        """
+        rl, rt = removed_rect.x(), removed_rect.y()
+        rr = rl + removed_rect.width()
+        rh = removed_rect.height()
+
+        affected = []
+        for win in self._windows:
+            if not win.isVisible():
+                continue
+            wl, wr = win.x(), win.x() + win.width()
+            x_overlaps = wl < rr and wr > rl
+            if x_overlaps and win.y() >= rt:
+                affected.append(win)
+        if not affected:
             return
 
-        # Simple cascade: move each subsequent window to the position of the one before it
-        positions = [removed_pos]
-        for i in range(removed_idx, len(self._windows)):
-            win = self._windows[i]
-            positions.append(win.pos())
-            anim = animate_slide(win, positions[i - removed_idx])
+        affected.sort(key=lambda w: w.y())
+        # Shift the whole below-group up by the first window's offset from the
+        # gap top, which closes a flush column exactly and pulls a loose one
+        # tidily upward without overshooting.
+        delta = affected[0].y() - rt
+        if delta <= 0:
+            return
+        for win in affected:
+            target = QPoint(win.x(), max(rt, win.y() - delta))
+            anim = animate_slide(win, target)
             self._active_anims.append(anim)
             anim.finished.connect(
                 lambda a=anim: self._active_anims.remove(a) if a in self._active_anims else None

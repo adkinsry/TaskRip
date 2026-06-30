@@ -13,8 +13,10 @@ Built with PySide6 (Qt for Python) — runs on Linux and ports to Windows with z
 - **Scroll-wheel resize** — Hold left click on the title bar and scroll to resize in fixed grid increments
 - **Animated archival** — Click the checkmark to archive a task. It shrinks and flies away, and remaining windows slide to fill the gap
 - **Archive browser** — Search, sort (8 modes), restore, or permanently delete archived tasks
-- **Subtask checkboxes** — Each task can have multiple subtasks with toggle state
+- **Editable subtasks** — Add, rename, check off, or delete subtasks right on the card ("+ Add subtask")
+- **Delete or archive** — ✓ archives a finished task; ✕ discards it (with a confirm) without cluttering the archive
 - **Inline editing** — Double-click a title to rename it
+- **Live theming** — Switching theme in Settings restyles open windows immediately, no restart
 - **Persistence** — Tasks and positions are saved to SQLite and restored on launch
 - **Themes** — Light (default), Dark, or System (auto-detect). Configurable in Settings
 - **Customizable hotkey** — Change the capture shortcut in Settings without restarting
